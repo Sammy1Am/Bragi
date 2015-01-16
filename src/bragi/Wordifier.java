@@ -128,7 +128,7 @@ public class Wordifier {
             if (w > 0) {
                 newString.append(" ");
             }
-            newString.append(words[w].value);
+            newString.append(words[w].value); // TODO Figure out why some words come back null on rhymes?
         }
 
         return newString.toString();
@@ -178,7 +178,11 @@ public class Wordifier {
     }
 
     private Word createWord(String inputString) {
-        Word newWord = new Word(inputString.toLowerCase());
+        
+        /*
+            Lowercase, and remove weird punctuation, but not commas or apostrophes since they might be part of the word
+        */
+        Word newWord = new Word(inputString.toLowerCase().replaceAll("[\\\"\\(\\)]", ""));
 
         // If anything is hyphenated, just look-up the rhyme for the last word, and add syllables for both.
         String[] subwords = newWord.value.split("-");

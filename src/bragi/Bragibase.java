@@ -241,6 +241,42 @@ public class Bragibase implements IWordConsumer {
 
         return returnWords;
     }
+    
+    
+    // TODO: Alternatvely, accept the RhymeSound and look that up instead.  That'll
+    // probably be a lot faster.  Maaybe?  -- still have to actually look up node, then apply
+    // value to relationships...(Make sure indexes are on) 
+    public Word[] getRhymingEnd(Word lastword) {
+        
+                Word[] returnWords = new Word[DB_ORDER];
+                
+        try (Transaction tx = graphDb.beginTx()){
+            
+            Map<String, Object> params = new HashMap<>();
+            params.put("targetword", lastword.value);
+            
+            ResourceIterator<Map<String,Object>> results = engine.execute("MATCH (prev:Word)-[rel:FOLLOWED_BY]->(end:EndNode {side:\"end\"}), " +
+                                                    "(t:Word {value:{targetword}})-[:HAS_RHYME]->(r)<-[:HAS_RHYME]-(rword:Word) " +
+                                                    "WHERE rel.one = rword.value " +
+                                                    "WITH prev,rel,rand() AS number RETURN prev,rel ORDER BY number LIMIT 1",params).javaIterator();
+
+            if (results.hasNext()) {
+                Map<String,Object> row = results.next();
+                Relationship rel = (Relationship) row.get("rel");
+                Node targetNode = (Node) row.get("prev");
+                
+                for (int n=1;n<DB_ORDER;n++){
+                    returnWords[n] = new Word(rel.getProperty(FOLLOW_NAMES[n]).toString());
+                }
+                
+                returnWords[0] = new Word(targetNode.getProperty(WORD_VALUE).toString());
+            }
+
+            tx.success();
+        }
+
+        return returnWords;
+    }
 
     public Word[] getNextWords(Word[] currentState) {
         ArrayList<Word> resultWords = new ArrayList<>();
