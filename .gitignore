@@ -1,3 +1,6 @@
+# Built database files
+bbase
+
 *.class
 
 # Mobile Tools for Java (J2ME)
