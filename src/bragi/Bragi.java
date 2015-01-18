@@ -32,39 +32,39 @@ public class Bragi {
         
             wf.compileDictionary("cmudict/cmudict.dict");
         
-//            for (Word[] sentence : wf.wordifyTrainingFile("TrainingSentences.txt")){
-//                bb.addChain(sentence);
-//            }
-//            
-//            TestWordWriter tww = new TestWordWriter("outTraining.txt");
-//            wf.streamWordifiedContent("TrainingSentences.txt", tww);
-//            tww.close();
-//            
-//            tww = new TestWordWriter("outGB.txt");
-//            wf.streamWordifiedContent("RawTexts/Ghostbusters.txt", bb);
-//            tww.close();
-//            
-//            tww = new TestWordWriter("outTND.txt");
-//            wf.streamWordifiedContent("RawTexts/tomorrowneverdies.txt", bb);
-//            tww.close();
-//            
-//            tww = new TestWordWriter("outID4.txt");
-//            wf.streamWordifiedContent("RawTexts/ID4.txt", bb);
-//            tww.close(); 
+            for (Word[] sentence : wf.wordifyTrainingFile("TrainingSentences.txt")){
+                bb.addChain(sentence);
+            }
+            
+            TestWordWriter tww = new TestWordWriter("outTraining.txt");
+            wf.streamWordifiedContent("TrainingSentences.txt", tww);
+            tww.close();
+            
+            tww = new TestWordWriter("outGB.txt");
+            wf.streamWordifiedContent("RawTexts/Ghostbusters.txt", bb);
+            tww.close();
+            
+            tww = new TestWordWriter("outTND.txt");
+            wf.streamWordifiedContent("RawTexts/tomorrowneverdies.txt", bb);
+            tww.close();
+            
+            tww = new TestWordWriter("outID4.txt");
+            wf.streamWordifiedContent("RawTexts/ID4.txt", bb);
+            tww.close(); 
             
         } catch (IOException ex) {
             Logger.getLogger(Bragi.class.getName()).log(Level.SEVERE, null, ex);
         }     
     
-        for (int i=0;i<50;i++){
-            
-            Word[] babbledWords = bab.babble();
-            Word[] coupledWords = bb.getRhymingEnd(babbledWords[babbledWords.length-1]);
-            
-            System.out.println(Wordifier.compileWords(babbledWords));
-            if (coupledWords != null) { System.out.println(Wordifier.compileWords(coupledWords));}else{ System.out.println("NO RHYME");}
-            System.out.println();
-        }
+//        for (int i=0;i<50;i++){
+//            
+//            Word[] babbledWords = bab.babble();
+//            Word[] coupledWords = bb.getRhymingEnd(babbledWords[babbledWords.length-1]);
+//            
+//            System.out.println(Wordifier.compileWords(babbledWords));
+//            if (coupledWords != null) { System.out.println(Wordifier.compileWords(coupledWords));}else{ System.out.println("NO RHYME");}
+//            System.out.println();
+//        }
         
         
         bb.graphDb.shutdown();

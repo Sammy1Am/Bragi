@@ -6,6 +6,7 @@
 package bragi;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import org.neo4j.cypher.ExecutionEngine;
@@ -23,7 +24,6 @@ import org.neo4j.graphdb.Transaction;
 import org.neo4j.graphdb.factory.GraphDatabaseFactory;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.graphdb.schema.Schema;
-import org.neo4j.kernel.api.exceptions.schema.AlreadyIndexedException;
 import org.neo4j.kernel.impl.util.StringLogger;
 
 /**
@@ -39,7 +39,11 @@ public class Bragibase implements IWordConsumer {
     private final int DB_ORDER = 2;
 
     private static enum RelTypes implements RelationshipType {
-        FOLLOWED_BY, HAS_RHYME
+        FOLLOWED_BY, HAS_RHYME, WORD
+    }
+    
+    private static enum PreRelTypes implements RelationshipType {
+        PRE0,PRE1,PRE2,PRE3,PRE4
     }
 
     private static final String[] FOLLOW_NAMES = new String[]{"zero", "one", "two", "three", "four", "five"};
@@ -49,6 +53,7 @@ public class Bragibase implements IWordConsumer {
     private static final String RHYME_VALUE = "value";
     
     Label terminalLabel = DynamicLabel.label("EndNode");
+    Label stateLabel = DynamicLabel.label("State");
     Label wordLabel = DynamicLabel.label("Word");
     Label rhymeLabel = DynamicLabel.label("RhymeSound");
 
@@ -57,8 +62,8 @@ public class Bragibase implements IWordConsumer {
 
     public Bragibase() {
         graphDb = new GraphDatabaseFactory().newEmbeddedDatabaseBuilder(DB_PATH)
-                .setConfig(GraphDatabaseSettings.relationship_keys_indexable, "one,two")
-                .setConfig(GraphDatabaseSettings.relationship_auto_indexing, "true")
+//                .setConfig(GraphDatabaseSettings.relationship_keys_indexable, "one,two")
+//                .setConfig(GraphDatabaseSettings.relationship_auto_indexing, "true")
                 .newGraphDatabase();
         registerShutdownHook(graphDb);
         engine = new ExecutionEngine(graphDb, StringLogger.SYSTEM);
@@ -154,58 +159,134 @@ public class Bragibase implements IWordConsumer {
         return returnNode;
     }
 
+    // TODO Do this with Nodes as input for performance reasons??
+    private Node getOrCreateState(Node[] previousWordNodes, Node wordNode){
+        HashMap<String,Object> params = new HashMap<>();
+        StringBuilder sb = new StringBuilder("MATCH (s:State)-[:WORD]->(w:Word {value:{wordvalue}})");
+        params.put("wordvalue", wordNode.getProperty(WORD_VALUE));
+
+        
+        for(int pw = previousWordNodes.length-1;pw>=0;pw--){
+            int preNum = previousWordNodes.length-pw;
+            sb.append(String.format("\n,(s)-[:%s]->(p%s:Word {value:{%s}})", PreRelTypes.values()[preNum].toString(),preNum,preNum));
+            params.put(String.valueOf(preNum), previousWordNodes[pw].getProperty(WORD_VALUE));
+        }
+        
+        sb.append("\nRETURN s");
+        
+        Node stateNode = null;
+        
+        // Try to get an existing state node that already exists
+        try (ResourceIterator<Node> results = engine.execute(sb.toString(),params).javaColumnAs("s")){
+            if (results.hasNext()){
+                stateNode = results.next();
+                results.close();
+            }
+        }
+        
+        // If we didn't get one, we'll need to create it
+        if (stateNode == null){
+            
+            stateNode = graphDb.createNode(stateLabel);
+            stateNode.createRelationshipTo(wordNode, RelTypes.WORD);
+            
+            for(int pn = previousWordNodes.length-1;pn>=0;pn--){
+                int preNum = previousWordNodes.length-pn;
+                stateNode.createRelationshipTo(previousWordNodes[pn], PreRelTypes.values()[preNum]);
+            }
+        }
+        
+        return stateNode;
+    }
+    
     @Override
     public void addChain(Word[] chainToAdd) {
 
         try (Transaction tx = graphDb.beginTx()) {
-            Node[] wordNodes = new Node[chainToAdd.length + 2];
-            wordNodes[0] = startNode;
-            wordNodes[wordNodes.length - 1] = endNode;
+            
+            Node[] newWordNodes = new Node[chainToAdd.length];
+            for (int nw=0;nw<chainToAdd.length;nw++){
+                newWordNodes[nw] = getOrCreateWord(chainToAdd[nw]);
+            }
+            
+            Node[] stateNodes = new Node[chainToAdd.length + 2];
+            stateNodes[0] = startNode;
+            stateNodes[stateNodes.length - 1] = endNode;
 
             // Populate word nodes from chain
-            for (int w = 1; w <= chainToAdd.length; w++) {
-                wordNodes[w] = getOrCreateWord(chainToAdd[w - 1]);
+            for (int s = 0; s < chainToAdd.length; s++) {
+                
+                Node[] previousWordNodes = Arrays.copyOfRange(newWordNodes, Math.max(s-(DB_ORDER-1), 0), s);
+                
+                stateNodes[s+1] = getOrCreateState(previousWordNodes, newWordNodes[s]);
             }
-
-            // For each grop of DB_ORDER+1 words, create a relationship.  For-loop
-            // over the target so that inputs of less than DB_ORDER will not cause
-            // issues (though their nodes will be created/updated
-            for (int t = DB_ORDER; t < wordNodes.length; t++) {
-                //TODO Check for existing relationship
-
-                int w = t - DB_ORDER; //Index of first node in relationship
-
-                /*
-                 Check to see if the relationship already exists by looking through each existing relationship that
-                 connects these two nodes to see if the properties match the properties we WOULD create.  (i.e. the
-                 intervening words).  If we find one that DOES match, set the relExists flag to true, and skip relationship
-                 creation later.
-                 */
-                boolean relExists = false;
-
-                for (Relationship r : wordNodes[t].getRelationships(Direction.INCOMING, RelTypes.FOLLOWED_BY)) {
-                    boolean noMismatches = false;
-                    if (r.getStartNode().equals(wordNodes[w])) {
-                        noMismatches = true; // Set this to true knowing that we'll always have properties to AND it back to false
-                        for (int n = 1; n < DB_ORDER; n++) {
-                            noMismatches &= r.getProperty(FOLLOW_NAMES[n]).equals(wordNodes[w + n].getProperty(WORD_VALUE));
-                        }
-                    }
-                    if (noMismatches) {
-                        relExists = true;
+            
+            //Check for first relationship backward because it'll be faster
+            boolean startRelExists = false;
+            for (Relationship r : stateNodes[1].getRelationships(Direction.INCOMING, RelTypes.FOLLOWED_BY)){
+                if (r.getStartNode().equals(stateNodes[0])){
+                    startRelExists = true;
+                    break;
+                }
+            }
+            if (!startRelExists){
+                stateNodes[0].createRelationshipTo(stateNodes[1],RelTypes.FOLLOWED_BY);
+            }
+            
+            // Connect all the states if the relationship doesn't already exist.
+            for (int s=1;s<stateNodes.length-1;s++){
+                boolean relationshipExists = false;
+                for (Relationship r : stateNodes[s].getRelationships(Direction.OUTGOING, RelTypes.FOLLOWED_BY)){
+                    if (r.getEndNode().equals(stateNodes[s+1])){
+                        relationshipExists = true;
                         break;
                     }
                 }
-
-                // Only create the relationship if it doesn't exist already
-                if (!relExists) {
-                    Relationship rel = wordNodes[t - DB_ORDER].createRelationshipTo(wordNodes[t], RelTypes.FOLLOWED_BY);
-
-                    for (int n = 1; n < DB_ORDER; n++) {
-                        rel.setProperty(FOLLOW_NAMES[n], wordNodes[w + n].getProperty(WORD_VALUE));
-                    }
-                }
+                if (!relationshipExists) stateNodes[s].createRelationshipTo(stateNodes[s+1], RelTypes.FOLLOWED_BY);
             }
+            
+            // Connect last state to end!
+            
+
+//            // For each grop of DB_ORDER+1 words, create a relationship.  For-loop
+//            // over the target so that inputs of less than DB_ORDER will not cause
+//            // issues (though their nodes will be created/updated
+//            for (int t = DB_ORDER; t < wordNodes.length; t++) {
+//                //TODO Check for existing relationship
+//
+//                int w = t - DB_ORDER; //Index of first node in relationship
+//
+//                /*
+//                 Check to see if the relationship already exists by looking through each existing relationship that
+//                 connects these two nodes to see if the properties match the properties we WOULD create.  (i.e. the
+//                 intervening words).  If we find one that DOES match, set the relExists flag to true, and skip relationship
+//                 creation later.
+//                 */
+//                boolean relExists = false;
+//
+//                for (Relationship r : wordNodes[t].getRelationships(Direction.INCOMING, RelTypes.FOLLOWED_BY)) {
+//                    boolean noMismatches = false;
+//                    if (r.getStartNode().equals(wordNodes[w])) {
+//                        noMismatches = true; // Set this to true knowing that we'll always have properties to AND it back to false
+//                        for (int n = 1; n < DB_ORDER; n++) {
+//                            noMismatches &= r.getProperty(FOLLOW_NAMES[n]).equals(wordNodes[w + n].getProperty(WORD_VALUE));
+//                        }
+//                    }
+//                    if (noMismatches) {
+//                        relExists = true;
+//                        break;
+//                    }
+//                }
+//
+//                // Only create the relationship if it doesn't exist already
+//                if (!relExists) {
+//                    Relationship rel = wordNodes[t - DB_ORDER].createRelationshipTo(wordNodes[t], RelTypes.FOLLOWED_BY);
+//
+//                    for (int n = 1; n < DB_ORDER; n++) {
+//                        rel.setProperty(FOLLOW_NAMES[n], wordNodes[w + n].getProperty(WORD_VALUE));
+//                    }
+//                }
+//            }
             tx.success();
         }
 
